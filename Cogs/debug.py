@@ -3,8 +3,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 from utils.verify_log import get_recent
-import cogs.antiraid as antiraid_state
-
+from . import antiraid as antiraid_state
 
 def is_server_owner():
     async def predicate(ctx: commands.Context):
