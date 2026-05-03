@@ -66,6 +66,33 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/test")
+def test_kill():
+    token = request.args.get("token", "")
+    if token != AUTH_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+
+    if bot_ref is None:
+        return jsonify({"error": "bot not ready"}), 503
+
+    now   = datetime.datetime.utcnow().strftime("%m/%d")
+    embed = discord.Embed(title="💀 Kill Log", color=0xe74c3c)
+    embed.add_field(name="Killer", value="TestKiller",  inline=False)
+    embed.add_field(name="Victim", value="TestVictim",  inline=False)
+    embed.add_field(name="Time",   value=now,           inline=False)
+    embed.add_field(name="Weapon", value="TestWeapon",  inline=False)
+    embed.set_footer(text="This is a test message")
+
+    async def send():
+        ch = bot_ref.get_channel(KILL_CHANNEL_ID)
+        if ch:
+            await ch.send(embed=embed)
+
+    import asyncio
+    asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
+    return jsonify({"status": "test sent to kill channel"})
+
+
 @app.route("/log")
 def log_get():
     token = request.args.get("token", "")
