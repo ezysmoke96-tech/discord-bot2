@@ -32,10 +32,12 @@ def get_embed(log_type, params):
 
     elif log_type == "kill":
         victim = params.get("victim", "Unknown")
+        weapon = params.get("weapon", "Unknown")
         embed = discord.Embed(title="💀 Kill Log", color=0xe74c3c)
-        embed.add_field(name="Killer",  value=player, inline=True)
-        embed.add_field(name="Victim",  value=victim, inline=True)
-        embed.add_field(name="Server",  value=server, inline=False)
+        embed.add_field(name="Killer", value=player, inline=True)
+        embed.add_field(name="Victim", value=victim, inline=True)
+        embed.add_field(name="Weapon", value=weapon, inline=True)
+        embed.add_field(name="Server", value=server, inline=False)
         return embed, KILL_CHANNEL_ID
 
     elif log_type == "jail":
