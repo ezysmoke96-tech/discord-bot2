@@ -13,13 +13,15 @@ ROBLOX_AVATAR_URL = (
 )
 ROBLOX_PROFILE_URL = "https://www.roblox.com/users/{user_id}/profile"
 
+VERIFIED_ROLE_NAME = "Verified"
 
-async def _fetch(session: aiohttp.ClientSession, url: str) -> dict | None:
+
+async def _fetch(session: aiohttp.ClientSession, url: str):
     try:
         async with session.get(url) as resp:
             if resp.status == 200:
                 return await resp.json()
-    except Exception:
+    except:
         pass
     return None
 
@@ -32,51 +34,54 @@ class RobloxInfo(commands.Cog):
 
     @commands.command(name="info")
     async def info(self, ctx: commands.Context, *, roblox_username: str = ""):
-        """Look up a Roblox user's profile info."""
         if not roblox_username:
             await ctx.send("Usage: `!info <roblox_username>`")
             return
 
+        member = ctx.author
+        verified_role = discord.utils.get(ctx.guild.roles, name=VERIFIED_ROLE_NAME)
+        is_verified_discord = verified_role in member.roles if verified_role else False
+
         async with ctx.typing():
             async with aiohttp.ClientSession() as session:
+
                 async with session.post(
                     ROBLOX_USERNAMES_URL,
                     json={"usernames": [roblox_username], "excludeBannedUsers": False},
                 ) as resp:
                     if resp.status != 200:
-                        await ctx.send("Could not reach the Roblox API. Try again later.")
+                        await ctx.send("Could not reach Roblox API.")
                         return
+
                     data = await resp.json()
                     users = data.get("data", [])
 
                 if not users:
-                    await ctx.send(
-                        f"No Roblox account found with the username **{roblox_username}**."
-                    )
+                    await ctx.send(f"No Roblox user found: **{roblox_username}**")
                     return
 
                 user_id = users[0]["id"]
 
-                profile, friends, followers, following, avatar = (
-                    await _fetch(session, ROBLOX_USER_URL.format(user_id=user_id)),
-                    await _fetch(session, ROBLOX_FRIENDS_URL.format(user_id=user_id)),
-                    await _fetch(session, ROBLOX_FOLLOWERS_URL.format(user_id=user_id)),
-                    await _fetch(session, ROBLOX_FOLLOWING_URL.format(user_id=user_id)),
-                    await _fetch(session, ROBLOX_AVATAR_URL.format(user_id=user_id)),
-                )
+                profile = await _fetch(session, ROBLOX_USER_URL.format(user_id=user_id))
+                friends = await _fetch(session, ROBLOX_FRIENDS_URL.format(user_id=user_id))
+                followers = await _fetch(session, ROBLOX_FOLLOWERS_URL.format(user_id=user_id))
+                following = await _fetch(session, ROBLOX_FOLLOWING_URL.format(user_id=user_id))
+                avatar = await _fetch(session, ROBLOX_AVATAR_URL.format(user_id=user_id))
 
         if not profile:
-            await ctx.send("Could not fetch profile data. Try again later.")
+            await ctx.send("Failed to load Roblox profile.")
             return
 
-        display_name = profile.get("displayName", profile.get("name", "N/A"))
+        display_name = profile.get("displayName", "N/A")
         username = profile.get("name", "N/A")
+
         description = profile.get("description") or "No description."
         if len(description) > 200:
             description = description[:197] + "..."
-        created_raw = profile.get("created", "")
-        created = created_raw[:10] if created_raw else "Unknown"
+
+        created = profile.get("created", "Unknown")[:10]
         is_banned = profile.get("isBanned", False)
+        is_verified_roblox = profile.get("hasVerifiedBadge", False)
 
         friend_count = friends.get("count", "N/A") if friends else "N/A"
         follower_count = followers.get("count", "N/A") if followers else "N/A"
@@ -84,9 +89,9 @@ class RobloxInfo(commands.Cog):
 
         avatar_url = None
         if avatar:
-            thumbs = avatar.get("data", [])
-            if thumbs:
-                avatar_url = thumbs[0].get("imageUrl")
+            data = avatar.get("data", [])
+            if data:
+                avatar_url = data[0].get("imageUrl")
 
         embed = discord.Embed(
             title=f"{display_name} (@{username})",
@@ -94,22 +99,41 @@ class RobloxInfo(commands.Cog):
             description=description,
             color=discord.Color.red() if is_banned else discord.Color.blurple(),
         )
+
         if avatar_url:
             embed.set_thumbnail(url=avatar_url)
 
         embed.add_field(name="User ID", value=str(user_id), inline=True)
-        embed.add_field(name="Joined Roblox", value=created, inline=True)
-        embed.add_field(name="Account Status", value="🚫 Banned" if is_banned else "✅ Active", inline=True)
+        embed.add_field(name="Joined", value=created, inline=True)
+        embed.add_field(
+            name="Roblox Status",
+            value="🚫 Banned" if is_banned else "✅ Active",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Roblox Verified",
+            value="✅ Yes" if is_verified_roblox else "❌ No",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Discord Verified",
+            value="✅ Yes" if is_verified_discord else "❌ No",
+            inline=True,
+        )
+
         embed.add_field(name="Friends", value=str(friend_count), inline=True)
         embed.add_field(name="Followers", value=str(follower_count), inline=True)
         embed.add_field(name="Following", value=str(following_count), inline=True)
-        embed.set_footer(text="Roblox Profile Lookup")
+
+        embed.set_footer(text="Roblox Info System")
 
         await ctx.send(embed=embed)
 
     @info.error
     async def info_error(self, ctx: commands.Context, error):
-        await ctx.send(f"Something went wrong: {error}")
+        await ctx.send(f"Error: {error}")
 
 
 async def setup(bot: commands.Bot):
