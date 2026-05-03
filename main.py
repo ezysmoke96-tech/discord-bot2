@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 import threading
+import datetime
 from flask import Flask, request, jsonify
 
 # ── Flask web server ──────────────────────────────────────────────────────────
@@ -33,11 +34,12 @@ def get_embed(log_type, params):
     elif log_type == "kill":
         victim = params.get("victim", "Unknown")
         weapon = params.get("weapon", "Unknown")
-        embed = discord.Embed(title="💀 Kill Log", color=0xe74c3c)
-        embed.add_field(name="Killer", value=player, inline=True)
-        embed.add_field(name="Victim", value=victim, inline=True)
-        embed.add_field(name="Weapon", value=weapon, inline=True)
-        embed.add_field(name="Server", value=server, inline=False)
+        now    = datetime.datetime.utcnow().strftime("%m/%d")
+        embed  = discord.Embed(title="💀 Kill Log", color=0xe74c3c)
+        embed.add_field(name="Killer", value=player, inline=False)
+        embed.add_field(name="Victim", value=victim, inline=False)
+        embed.add_field(name="Time",   value=now,    inline=False)
+        embed.add_field(name="Weapon", value=weapon, inline=False)
         return embed, KILL_CHANNEL_ID
 
     elif log_type == "jail":

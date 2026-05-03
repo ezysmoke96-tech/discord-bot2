@@ -19,16 +19,7 @@ local function urlEncode(str)
     return result
 end
 
-event("playerRespawned", function(data)
-    if not data then return end
-    if not data.Value then return end
-    if not data.Value[1] then return end
-    if not data.Value[2] then return end
-
-    local victim = tostring(data.Value[1])
-    local killer = tostring(data.Value[2])
-    local weapon = data.Value[3] and tostring(data.Value[3]) or "Unknown"
-
+local function sendKill(killer, victim, weapon)
     local url = BOT_URL
         .. "?token=" .. AUTH_TOKEN
         .. "&type=kill"
@@ -37,9 +28,24 @@ event("playerRespawned", function(data)
         .. "&weapon=" .. urlEncode(weapon)
         .. "&server=" .. urlEncode(SERVER_NAME)
 
-    print("[GARBot] URL:", url)
+    print("[GARBot] URL: " .. url)
     local ok, result = pcall(http, url)
-    if not ok then warn("[GARBot] Error:", tostring(result)) end
+    print("[GARBot] ok=" .. tostring(ok) .. " result=" .. tostring(result))
+end
+
+event("playerRespawned", function(data)
+    if data == nil then return end
+    if data.Value == nil then return end
+
+    local victim = tostring(data.Value[1] or "Unknown")
+    local killer = data.Value[2]
+
+    if killer == nil then return end
+
+    killer = tostring(killer)
+    local weapon = tostring(data.Value[3] or "Unknown")
+
+    task.spawn(sendKill, killer, victim, weapon)
 end)
 
 print("[GARBot] Kill logs addon loaded")
