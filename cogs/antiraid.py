@@ -4,29 +4,40 @@ import discord
 from collections import defaultdict, deque
 from discord.ext import commands
 
-JOIN_FLOOD_COUNT = 5
-JOIN_FLOOD_SECONDS = 10
-MIN_ACCOUNT_AGE_DAYS = 3
+# ── Configurable thresholds ───────────────────────────────────────────────────
+JOIN_FLOOD_COUNT = 5          # joins within …
+JOIN_FLOOD_SECONDS = 10       # … this many seconds → auto-lockdown
+MIN_ACCOUNT_AGE_DAYS = 3      # accounts younger than this → kick on join
+MAX_MENTIONS = 5              # mentions per message before mute
+SPAM_MSG_COUNT = 5            # messages within …
+SPAM_MSG_SECONDS = 3          # … this many seconds → auto-mute (60 s)
 
-MAX_MENTIONS = 5
-SPAM_MSG_COUNT = 5
-SPAM_MSG_SECONDS = 3
-
+# Escalating mute durations in minutes for mass mentions (last value is the cap)
 MENTION_MUTE_STEPS = [5, 10, 20, 30]
+# ─────────────────────────────────────────────────────────────────────────────
 
-lockdown_active = False
-lockdown_reason = ""
+# Shared lockdown state (read by debug cog)
+lockdown_active: bool = False
+lockdown_reason: str = ""
 
-_join_times = deque()
-_msg_times = defaultdict(lambda: deque())
-_mention_offenses = {}
-_active_mutes = {}
+# Internal tracking
+_join_times: deque = deque()
+_msg_times: dict[int, deque] = defaultdict(lambda: deque())
+
+# mention_offenses[user_id] = number of offenses so far
+_mention_offenses: dict[int, int] = {}
+
+# active_mutes[user_id] = {"expires_at": datetime, "minutes": int, "guild_id": int}
+# Persists across rejoins
+_active_mutes: dict[int, dict] = {}
 
 
-def _log_channel(guild: discord.Guild):
+def _log_channel(guild: discord.Guild) -> discord.TextChannel | None:
     import os
     cid = os.environ.get("LOG_CHANNEL_ID")
-    return guild.get_channel(int(cid)) if cid else None
+    if cid:
+        return guild.get_channel(int(cid))
+    return None
 
 
 async def _send_log(guild: discord.Guild, embed: discord.Embed):
@@ -42,17 +53,19 @@ async def _apply_lockdown(guild: discord.Guild, reason: str):
     global lockdown_active, lockdown_reason
     lockdown_active = True
     lockdown_reason = reason
+    print(f"[antiraid] LOCKDOWN triggered: {reason}")
 
     everyone = guild.default_role
-
     try:
-        await everyone.edit(send_messages=False)
+        await everyone.edit(
+            permissions=discord.Permissions(everyone.permissions.value & ~discord.Permissions.send_messages.flag)
+        )
     except discord.Forbidden:
-        print("[antiraid] Missing permission to edit @everyone")
+        print("[antiraid] Could not edit @everyone permissions — missing Manage Roles")
 
     embed = discord.Embed(
-        title="🔒 Lockdown Activated",
-        description=f"Reason: {reason}",
+        title="🔒 Server Lockdown Activated",
+        description=f"**Reason:** {reason}\n\nAll message sending has been restricted. An admin must run `!unlockdown` to lift it.",
         color=discord.Color.red(),
         timestamp=datetime.datetime.utcnow(),
     )
@@ -63,152 +76,40 @@ async def _lift_lockdown(guild: discord.Guild, moderator: str):
     global lockdown_active, lockdown_reason
     lockdown_active = False
     lockdown_reason = ""
+    print(f"[antiraid] Lockdown lifted by {moderator}")
 
+    everyone = guild.default_role
     try:
-        await guild.default_role.edit(send_messages=True)
+        await everyone.edit(
+            permissions=discord.Permissions(everyone.permissions.value | discord.Permissions.send_messages.flag)
+        )
     except discord.Forbidden:
-        print("[antiraid] Missing permission to restore @everyone")
+        print("[antiraid] Could not restore @everyone permissions — missing Manage Roles")
 
     embed = discord.Embed(
-        title="🔓 Lockdown Lifted",
-        description=f"Lifted by {moderator}",
+        title="🔓 Server Lockdown Lifted",
+        description=f"Lockdown has been lifted by **{moderator}**. The server is back to normal.",
         color=discord.Color.green(),
         timestamp=datetime.datetime.utcnow(),
     )
     await _send_log(guild, embed)
 
 
-def _next_mute_duration(offense: int):
-    return MENTION_MUTE_STEPS[min(offense - 1, len(MENTION_MUTE_STEPS) - 1)]
+def _next_mute_duration(offense_count: int) -> int:
+    """Return mute duration in minutes for the given offense number (1-based)."""
+    idx = min(offense_count - 1, len(MENTION_MUTE_STEPS) - 1)
+    return MENTION_MUTE_STEPS[idx]
 
 
-class AntiRaid(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
+async def _apply_mention_mute(member: discord.Member, guild: discord.Guild, minutes: int, offense: int):
+    """Apply a timed mute to a member and schedule its removal."""
+    muted_role = discord.utils.get(guild.roles, name="Muted")
+    if not muted_role:
+        print("[antiraid] No 'Muted' role found — cannot apply mention mute")
+        return False
 
-    # ── JOIN FLOOD ─────────────────────
-    @commands.Cog.listener()
-    async def on_member_join(self, member):
-        now = datetime.datetime.utcnow()
-
-        _join_times.append(now)
-        cutoff = now - datetime.timedelta(seconds=JOIN_FLOOD_SECONDS)
-
-        while _join_times and _join_times[0] < cutoff:
-            _join_times.popleft()
-
-        if len(_join_times) >= JOIN_FLOOD_COUNT and not lockdown_active:
-            await _apply_lockdown(
-                member.guild,
-                "Join flood detected"
-            )
-
-    # ── MESSAGE HANDLER ─────────────────────
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
-            return
-
-        # MASS MENTIONS
-        mention_count = len(message.mentions) + len(message.role_mentions)
-
-        if mention_count >= MAX_MENTIONS:
-            try:
-                await message.delete()
-            except discord.Forbidden:
-                pass
-
-            muted_role = discord.utils.get(message.guild.roles, name="Muted")
-            if not muted_role:
-                return
-
-            uid = message.author.id
-            _mention_offenses[uid] = _mention_offenses.get(uid, 0) + 1
-            offense = _mention_offenses[uid]
-
-            minutes = _next_mute_duration(offense)
-            expires = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
-
-            try:
-                await message.author.add_roles(muted_role, reason="Mass mention")
-            except discord.Forbidden:
-                return
-
-            _active_mutes[uid] = {
-                "expires_at": expires,
-                "minutes": minutes,
-            }
-
-            await asyncio.sleep(1)
-
-        # IMPORTANT: DO NOT process commands here (handled globally in main.py)
-        return
-
-    # ── COMMANDS ─────────────────────
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def lockdown(self, ctx, *, reason="Manual"):
-        await _apply_lockdown(ctx.guild, reason)
-        await ctx.send("Lockdown enabled", delete_after=5)
-
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def unlockdown(self, ctx):
-        await _lift_lockdown(ctx.guild, str(ctx.author))
-        await ctx.send("Lockdown disabled", delete_after=5)
-
-
-async def setup(bot):
-    await bot.add_cog(AntiRaid(bot))        mention_count = len(message.mentions) + len(message.role_mentions)
-
-        if mention_count >= MAX_MENTIONS:
-            try:
-                await message.delete()
-            except discord.Forbidden:
-                pass
-
-            muted_role = discord.utils.get(message.guild.roles, name="Muted")
-            if not muted_role:
-                return
-
-            uid = message.author.id
-            _mention_offenses[uid] = _mention_offenses.get(uid, 0) + 1
-            offense = _mention_offenses[uid]
-
-            minutes = _next_mute_duration(offense)
-            expires = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
-
-            try:
-                await message.author.add_roles(muted_role, reason="Mass mention")
-            except discord.Forbidden:
-                return
-
-            _active_mutes[uid] = {
-                "expires_at": expires,
-                "minutes": minutes,
-            }
-
-            await asyncio.sleep(1)
-
-        # IMPORTANT: DO NOT process commands here (handled globally in main.py)
-        return
-
-    # ── COMMANDS ─────────────────────
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def lockdown(self, ctx, *, reason="Manual"):
-        await _apply_lockdown(ctx.guild, reason)
-        await ctx.send("Lockdown enabled", delete_after=5)
-
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def unlockdown(self, ctx):
-        await _lift_lockdown(ctx.guild, str(ctx.author))
-        await ctx.send("Lockdown disabled", delete_after=5)
-
-
-async def setup(bot):
-    await bot.add_cog(AntiRaid(bot))    _active_mutes[member.id] = {
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
+    _active_mutes[member.id] = {
         "expires_at": expires_at,
         "minutes": minutes,
         "guild_id": guild.id,
