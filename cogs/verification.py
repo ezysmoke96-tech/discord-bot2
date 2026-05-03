@@ -4,15 +4,19 @@ import datetime
 import aiohttp
 import discord
 from discord.ext import commands
+
 from utils.verify_log import VerifyEvent, record
 
 EXPIRY_MINUTES = 10
+
 ROBLOX_USERNAMES_URL = "https://users.roblox.com/v1/usernames/users"
 ROBLOX_USER_URL = "https://users.roblox.com/v1/users/{user_id}"
 
-# pending[discord_id] = {roblox_username, roblox_id, code, expires_at, original_nick}
+# 🔒 CONFIG — SET YOUR CHANNEL IDS HERE
+VERIFY_CHANNEL_NAME = "verify"
+UNVERIFY_CHANNEL_NAME = "bot_commands"
+
 pending: dict[int, dict] = {}
-# verified[discord_id] = {roblox_username, original_nick}
 verified: dict[int, dict] = {}
 
 
@@ -20,96 +24,130 @@ def _make_code() -> str:
     return "GAR-" + secrets.token_hex(4).upper()
 
 
+def _wrong_channel(ctx: commands.Context, allowed: str):
+    return ctx.send(f"❌ You can't execute that command here. Use #{allowed}.")
+
+
+def _check_channel(ctx: commands.Context, allowed_name: str) -> bool:
+    return ctx.channel.name == allowed_name
+
+
 async def _get_roblox_user(username: str) -> dict | None:
-    print(f"[verify] Looking up Roblox user: {username}")
     async with aiohttp.ClientSession() as session:
         async with session.post(
             ROBLOX_USERNAMES_URL,
             json={"usernames": [username], "excludeBannedUsers": True},
         ) as resp:
-            print(f"[verify] Roblox username lookup status: {resp.status}")
             if resp.status != 200:
                 return None
             data = await resp.json()
             users = data.get("data", [])
-            print(f"[verify] Found users: {users}")
             return users[0] if users else None
 
 
 async def _get_roblox_description(user_id: int) -> str | None:
-    print(f"[verify] Fetching Roblox description for user ID: {user_id}")
     async with aiohttp.ClientSession() as session:
         async with session.get(ROBLOX_USER_URL.format(user_id=user_id)) as resp:
-            print(f"[verify] Roblox profile fetch status: {resp.status}")
             if resp.status != 200:
                 return None
             data = await resp.json()
-            desc = data.get("description", "")
-            print(f"[verify] Description fetched (length {len(desc)}): {repr(desc[:100])}")
-            return desc
+            return data.get("description", "")
 
 
-def _get_role(guild: discord.Guild, name: str) -> discord.Role | None:
-    role = discord.utils.get(guild.roles, name=name)
-    if role:
-        print(f"[verify] Found role '{name}' (ID: {role.id})")
-    else:
-        print(f"[verify] Role '{name}' NOT found on server. Available roles: {[r.name for r in guild.roles]}")
-    return role
-
-
-async def _expire_pending(user_id: int, code: str):
+async def _expire(user_id: int, code: str):
     await asyncio.sleep(EXPIRY_MINUTES * 60)
     if user_id in pending and pending[user_id]["code"] == code:
         pending.pop(user_id, None)
-        print(f"[verify] Code expired for user ID {user_id}")
 
 
 class Verification(commands.Cog):
-    """Roblox account verification system."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    # ───────────────────────── VERIFY ─────────────────────────
     @commands.command(name="verify")
     async def verify(self, ctx: commands.Context, *, roblox_username: str = ""):
-        print(f"[verify] !verify called by {ctx.author} (ID: {ctx.author.id}), username arg: '{roblox_username}'")
+
+        if not _check_channel(ctx, VERIFY_CHANNEL_NAME):
+            return await _wrong_channel(ctx, VERIFY_CHANNEL_NAME)
 
         if not roblox_username:
-            await ctx.send("Please provide your Roblox username. Usage: `!verify <roblox_username>`")
-            return
+            return await ctx.send("Usage: `!verify <roblox_username>`")
 
         await ctx.message.delete()
 
         roblox_user = await _get_roblox_user(roblox_username)
         if not roblox_user:
-            print(f"[verify] No Roblox user found for '{roblox_username}'")
-            await ctx.author.send(
-                f"Could not find a Roblox account with the username **{roblox_username}**. "
-                "Please check the spelling and try again."
-            )
-            return
+            return await ctx.author.send("Roblox user not found.")
 
         code = _make_code()
-        expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=EXPIRY_MINUTES)
-        print(f"[verify] Generated code {code} for {ctx.author} → Roblox user '{roblox_user['name']}' (ID: {roblox_user['id']})")
 
         pending[ctx.author.id] = {
             "roblox_username": roblox_user["name"],
             "roblox_id": roblox_user["id"],
             "code": code,
-            "expires_at": expires_at,
+            "expires_at": datetime.datetime.utcnow() + datetime.timedelta(minutes=EXPIRY_MINUTES),
             "original_nick": ctx.author.display_name,
         }
 
-        asyncio.create_task(_expire_pending(ctx.author.id, code))
+        asyncio.create_task(_expire(ctx.author.id, code))
 
-        embed = discord.Embed(title="Roblox Verification", color=discord.Color.blurple())
+        embed = discord.Embed(title="Verification", color=discord.Color.blurple())
         embed.add_field(
             name="Step 1",
-            value=f"Go to your [Roblox profile](https://www.roblox.com/users/{roblox_user['id']}/profile) and open **Edit Profile**.",
+            value=f"Put this code in your Roblox bio:\n```{code}```",
             inline=False,
         )
+        embed.add_field(
+            name="Step 2",
+            value="Then type `!done` in the same channel.",
+            inline=False,
+        )
+
+        await ctx.author.send(embed=embed)
+        await ctx.send("Check your DMs!", delete_after=5)
+
+    # ───────────────────────── DONE ─────────────────────────
+    @commands.command(name="done")
+    async def done(self, ctx: commands.Context):
+
+        if not _check_channel(ctx, VERIFY_CHANNEL_NAME):
+            return await _wrong_channel(ctx, VERIFY_CHANNEL_NAME)
+
+        await ctx.message.delete()
+
+        entry = pending.get(ctx.author.id)
+        if not entry:
+            return await ctx.author.send("No pending verification.")
+
+        description = await _get_roblox_description(entry["roblox_id"])
+        if not description or entry["code"] not in description:
+            return await ctx.author.send("Code not found in Roblox bio.")
+
+        pending.pop(ctx.author.id, None)
+        verified[ctx.author.id] = entry
+
+        await ctx.author.send("✅ Verified successfully!")
+
+    # ───────────────────────── UNVERIFY ─────────────────────────
+    @commands.command(name="unverify")
+    async def unverify(self, ctx: commands.Context):
+
+        if not _check_channel(ctx, UNVERIFY_CHANNEL_NAME):
+            return await _wrong_channel(ctx, UNVERIFY_CHANNEL_NAME)
+
+        await ctx.message.delete()
+
+        if ctx.author.id not in verified:
+            return await ctx.author.send("You are not verified.")
+
+        verified.pop(ctx.author.id)
+
+        await ctx.author.send("You have been unverified.")
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Verification(bot))        )
         embed.add_field(
             name="Step 2",
             value=f"Paste the following code **anywhere** in your profile description:\n\n```\n{code}\n```",
