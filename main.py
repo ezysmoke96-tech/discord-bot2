@@ -1,20 +1,132 @@
-import os
-import asyncio
-import threading
-import datetime
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
+import os
+import threading
 from flask import Flask, request, jsonify
 
-load_dotenv()
+# ── Flask web server ──────────────────────────────────────────────────────────
+app = Flask(__name__)
 
-TOKEN = os.environ.get("DISCORD_TOKEN")
-ROBLOX_AUTH_TOKEN = os.environ.get("ROBLOX_AUTH_TOKEN", "changeme")
+AUTH_TOKEN = os.environ.get("ROBLOX_AUTH_TOKEN", "Danulite2009")
 
-KILL_LOG_CHANNEL_ID = 1500538920075530251
-CHAT_LOG_CHANNEL_ID = 1500538964518637678
-JAIL_LOG_CHANNEL_ID = 1500543345922146335
+KILL_CHANNEL_ID = 1500538920075530251
+CHAT_CHANNEL_ID = 1500538964518637678
+JAIL_CHANNEL_ID = 1500543345922146335
+
+bot_ref = None  # set after bot is created
+
+def get_embed(log_type, params):
+    player  = params.get("player", "Unknown")
+    server  = params.get("server", "Unknown")
+    message = params.get("message", "")
+    target  = params.get("target", "")
+    reason  = params.get("reason", "")
+    duration = params.get("duration", "")
+
+    if log_type == "chat":
+        embed = discord.Embed(title="💬 Chat Log", color=0x3498db)
+        embed.add_field(name="Player",   value=player,  inline=True)
+        embed.add_field(name="Message",  value=message, inline=False)
+        embed.add_field(name="Server",   value=server,  inline=False)
+        return embed, CHAT_CHANNEL_ID
+
+    elif log_type == "kill":
+        victim = params.get("victim", "Unknown")
+        embed = discord.Embed(title="💀 Kill Log", color=0xe74c3c)
+        embed.add_field(name="Killer",  value=player, inline=True)
+        embed.add_field(name="Victim",  value=victim, inline=True)
+        embed.add_field(name="Server",  value=server, inline=False)
+        return embed, KILL_CHANNEL_ID
+
+    elif log_type == "jail":
+        embed = discord.Embed(title="🔒 Jail Log", color=0xe67e22)
+        embed.add_field(name="Officer", value=player,   inline=True)
+        embed.add_field(name="Target",  value=target,   inline=True)
+        embed.add_field(name="Reason",  value=reason or "N/A",   inline=False)
+        embed.add_field(name="Duration",value=duration or "N/A", inline=True)
+        embed.add_field(name="Server",  value=server,  inline=False)
+        return embed, JAIL_CHANNEL_ID
+
+    elif log_type == "unjail":
+        embed = discord.Embed(title="🔓 Unjail Log", color=0x2ecc71)
+        embed.add_field(name="Officer", value=player, inline=True)
+        embed.add_field(name="Target",  value=target, inline=True)
+        embed.add_field(name="Server",  value=server, inline=False)
+        return embed, JAIL_CHANNEL_ID
+
+    return None, None
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
+@app.route("/log")
+def log_get():
+    token = request.args.get("token", "")
+    if token != AUTH_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+
+    log_type = request.args.get("type", "")
+    params   = request.args.to_dict()
+
+    embed, channel_id = get_embed(log_type, params)
+    if embed is None:
+        return jsonify({"error": "unknown log type"}), 400
+
+    if bot_ref is None:
+        return jsonify({"error": "bot not ready"}), 503
+
+    async def send():
+        ch = bot_ref.get_channel(channel_id)
+        if ch:
+            await ch.send(embed=embed)
+
+    import asyncio
+    asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
+    return jsonify({"status": "logged"})
+
+
+@app.route("/log", methods=["POST"])
+def log_post():
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if token != AUTH_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+
+    data     = request.get_json(force=True) or {}
+    log_type = data.get("type", "")
+
+    embed, channel_id = get_embed(log_type, data)
+    if embed is None:
+        return jsonify({"error": "unknown log type"}), 400
+
+    if bot_ref is None:
+        return jsonify({"error": "bot not ready"}), 503
+
+    async def send():
+        ch = bot_ref.get_channel(channel_id)
+        if ch:
+            await ch.send(embed=embed)
+
+    import asyncio
+    asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
+    return jsonify({"status": "logged"})
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    print(f"[web] Listening on port {port}")
+    app.run(host="0.0.0.0", port=port)
+
+
+# ── Discord bot ───────────────────────────────────────────────────────────────
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+bot_ref = bot
 
 COGS = [
     "cogs.general",
@@ -29,159 +141,23 @@ COGS = [
     "cogs.giveaway",
 ]
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
-# ── Web server ─────────────────────────────────────────────────────────────────
-web = Flask(__name__)
-_loop: asyncio.AbstractEventLoop | None = None
-
-
-@web.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"}), 200
-
-
-@web.route("/log", methods=["POST"])
-def receive_log():
-    auth = request.headers.get("Authorization", "")
-    if auth != f"Bearer {ROBLOX_AUTH_TOKEN}":
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
-
-    log_type = data.get("type")
-    if log_type == "kill":
-        asyncio.run_coroutine_threadsafe(_post_kill(data), _loop)
-    elif log_type == "chat":
-        asyncio.run_coroutine_threadsafe(_post_chat(data), _loop)
-    elif log_type == "jail":
-        asyncio.run_coroutine_threadsafe(_post_jail(data), _loop)
-    elif log_type == "unjail":
-        asyncio.run_coroutine_threadsafe(_post_unjail(data), _loop)
-    else:
-        return jsonify({"error": f"Unknown log type: {log_type}"}), 400
-
-    return jsonify({"ok": True}), 200
-
-
-async def _post_kill(data: dict):
-    channel = bot.get_channel(KILL_LOG_CHANNEL_ID)
-    if not channel:
-        print(f"[roblox] Kill log channel {KILL_LOG_CHANNEL_ID} not found")
-        return
-    embed = discord.Embed(
-        title="⚔️ Kill Log",
-        color=discord.Color.red(),
-        timestamp=datetime.datetime.utcnow(),
-    )
-    embed.add_field(name="Killer", value=data.get("killer", "Unknown"), inline=True)
-    embed.add_field(name="Victim", value=data.get("victim", "Unknown"), inline=True)
-    if data.get("weapon"):
-        embed.add_field(name="Weapon", value=data["weapon"], inline=True)
-    embed.set_footer(text=f"SCP: Roleplay • {data.get('server', 'Private Server')}")
-    await channel.send(embed=embed)
-
-
-async def _post_chat(data: dict):
-    channel = bot.get_channel(CHAT_LOG_CHANNEL_ID)
-    if not channel:
-        print(f"[roblox] Chat log channel {CHAT_LOG_CHANNEL_ID} not found")
-        return
-    player = data.get("player", "Unknown")
-    message = data.get("message", "")
-    if len(message) > 1000:
-        message = message[:997] + "..."
-    embed = discord.Embed(
-        description=f"**{player}:** {message}",
-        color=discord.Color.blurple(),
-        timestamp=datetime.datetime.utcnow(),
-    )
-    embed.set_footer(text=f"SCP: Roleplay • {data.get('server', 'Private Server')}")
-    await channel.send(embed=embed)
-
-
-async def _post_jail(data: dict):
-    if not JAIL_LOG_CHANNEL_ID:
-        print("[roblox] JAIL_LOG_CHANNEL_ID not set")
-        return
-    channel = bot.get_channel(JAIL_LOG_CHANNEL_ID)
-    if not channel:
-        print(f"[roblox] Jail log channel {JAIL_LOG_CHANNEL_ID} not found")
-        return
-    embed = discord.Embed(
-        title="🔒 Player Jailed",
-        color=discord.Color.orange(),
-        timestamp=datetime.datetime.utcnow(),
-    )
-    embed.add_field(name="Player", value=data.get("target", "Unknown"), inline=True)
-    embed.add_field(name="Jailed By", value=data.get("executor", "Unknown"), inline=True)
-    embed.add_field(name="Team", value=data.get("executor_team", "Unknown"), inline=True)
-    embed.add_field(name="Reason", value=data.get("reason", "No reason"), inline=True)
-    embed.add_field(name="Duration", value=f"{data.get('duration', 0)} seconds", inline=True)
-    embed.set_footer(text=f"SCP: Roleplay • {data.get('server', 'Private Server')}")
-    await channel.send(embed=embed)
-
-
-async def _post_unjail(data: dict):
-    if not JAIL_LOG_CHANNEL_ID:
-        print("[roblox] JAIL_LOG_CHANNEL_ID not set")
-        return
-    channel = bot.get_channel(JAIL_LOG_CHANNEL_ID)
-    if not channel:
-        print(f"[roblox] Jail log channel {JAIL_LOG_CHANNEL_ID} not found")
-        return
-    embed = discord.Embed(
-        title="🔓 Player Released",
-        color=discord.Color.green(),
-        timestamp=datetime.datetime.utcnow(),
-    )
-    embed.add_field(name="Player", value=data.get("target", "Unknown"), inline=True)
-    embed.add_field(name="Released By", value=data.get("executor", "Unknown"), inline=True)
-    embed.add_field(name="Team", value=data.get("executor_team", "Unknown"), inline=True)
-    embed.set_footer(text=f"SCP: Roleplay • {data.get('server', 'Private Server')}")
-    await channel.send(embed=embed)
-
-
-# ── Bot events ─────────────────────────────────────────────────────────────────
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print("------")
-
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-    await bot.process_commands(message)
-
-
-# ── Entry point ────────────────────────────────────────────────────────────────
-async def main():
-    global _loop
-    _loop = asyncio.get_running_loop()
-
-    port = int(os.environ.get("PORT", 8080))
-    flask_thread = threading.Thread(
-        target=lambda: web.run(host="0.0.0.0", port=port, use_reloader=False),
-        daemon=True,
-    )
-    flask_thread.start()
-    print(f"[web] Listening on port {port}")
-
-    async with bot:
-        for cog in COGS:
+    for cog in COGS:
+        try:
             await bot.load_extension(cog)
-        await bot.start(TOKEN)
+            print(f"[cog] Loaded {cog}")
+        except Exception as e:
+            print(f"[cog] Failed to load {cog}: {e}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"[slash] Synced {len(synced)} commands")
+    except Exception as e:
+        print(f"[slash] Sync failed: {e}")
 
 
 if __name__ == "__main__":
-    if not TOKEN:
-        raise RuntimeError("DISCORD_TOKEN secret is not set.")
-    asyncio.run(main())
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    bot.run(os.environ["DISCORD_TOKEN"])
