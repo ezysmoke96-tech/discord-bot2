@@ -39,19 +39,19 @@ def get_embed(log_type, params):
         return embed, KILL_CHANNEL_ID
 
     elif log_type == "jail":
-        embed = discord.Embed(title="🔒 Jail Log", color=0xe67e22)
-        embed.add_field(name="Officer", value=player,   inline=True)
-        embed.add_field(name="Target",  value=target,   inline=True)
-        embed.add_field(name="Reason",  value=reason or "N/A",   inline=False)
-        embed.add_field(name="Duration",value=duration or "N/A", inline=True)
-        embed.add_field(name="Server",  value=server,  inline=False)
+        embed = discord.Embed(title="🔒 Arrested", color=0xe67e22)
+        embed.add_field(name="Arrested By", value=player,          inline=False)
+        embed.add_field(name="Player",      value=target or "N/A", inline=False)
+        embed.add_field(name="Time",        value=duration or "N/A", inline=False)
+        embed.add_field(name="Reason",      value=reason or "N/A", inline=False)
+        embed.add_field(name="Server",      value=server,          inline=False)
         return embed, JAIL_CHANNEL_ID
 
     elif log_type == "unjail":
-        embed = discord.Embed(title="🔓 Unjail Log", color=0x2ecc71)
-        embed.add_field(name="Officer", value=player, inline=True)
-        embed.add_field(name="Target",  value=target, inline=True)
-        embed.add_field(name="Server",  value=server, inline=False)
+        embed = discord.Embed(title="🔓 Released", color=0x2ecc71)
+        embed.add_field(name="Released By", value=player,          inline=False)
+        embed.add_field(name="Player",      value=target or "N/A", inline=False)
+        embed.add_field(name="Server",      value=server,          inline=False)
         return embed, JAIL_CHANNEL_ID
 
     return None, None
