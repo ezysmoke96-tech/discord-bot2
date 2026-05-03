@@ -112,12 +112,6 @@ class RobloxInfo(commands.Cog):
         )
 
         embed.add_field(
-            name="Roblox Verified",
-            value="✅ Yes" if is_verified_roblox else "❌ No",
-            inline=True,
-        )
-
-        embed.add_field(
             name="Discord Verified",
             value="✅ Yes" if is_verified_discord else "❌ No",
             inline=True,
