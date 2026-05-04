@@ -41,11 +41,11 @@ def get_embed(log_type, params):
 
     elif log_type == "jail":
         embed = discord.Embed(title="🔒 Arrested", color=0xe67e22)
-        embed.add_field(name="Arrested By", value=player,           inline=False)
-        embed.add_field(name="Player",      value=target or "N/A",  inline=False)
+        embed.add_field(name="Arrested By", value=player,            inline=False)
+        embed.add_field(name="Player",      value=target or "N/A",   inline=False)
         embed.add_field(name="Time",        value=duration or "N/A", inline=False)
-        embed.add_field(name="Reason",      value=reason or "N/A",  inline=False)
-        embed.add_field(name="Server",      value=server,           inline=False)
+        embed.add_field(name="Reason",      value=reason or "N/A",   inline=False)
+        embed.add_field(name="Server",      value=server,            inline=False)
         return embed, JAIL_CHANNEL_ID
 
     elif log_type == "unjail":
@@ -142,6 +142,7 @@ COGS = [
     "cogs.giveaway",
     "cogs.announcements",
     "cogs.bgcheck",
+    "cogs.help",
 ]
 
 
