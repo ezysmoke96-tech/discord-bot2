@@ -1,8 +1,7 @@
 import discord
 from discord.ext import commands
 
-ANNOUNCE_CHANNEL_ID = 0  # ← Replace with your announcement channel ID
-SSU_SSD_CHANNEL_ID  = 1500845107736215724
+SSU_SSD_CHANNEL_ID = 1500845107736215724
 
 ROBLOX_LINK = (
     "https://www.roblox.com/games/5041144419/SCP-Roleplay"
@@ -18,16 +17,16 @@ class Announcements(commands.Cog):
         self.bot = bot
 
     # ── !announce ─────────────────────────────────────────────────────────────
-    # Usage: !announce [ping|none] | [Title] | [Text] | [ImageURL|none]
+    # Usage: !announce #channel | [ping|none] | [Title] | [Text] | [ImageURL|none]
     @commands.command(name="announce")
     @commands.has_permissions(manage_messages=True)
-    async def announce(self, ctx, *, args: str):
+    async def announce(self, ctx, channel: discord.TextChannel, *, args: str):
         await ctx.message.delete()
 
         parts = [p.strip() for p in args.split("|")]
         if len(parts) < 3:
             await ctx.send(
-                "Usage: `!announce [ping|none] | [Title] | [Text] | [ImageURL|none]`",
+                "Usage: `!announce #channel | [ping|none] | [Title] | [Text] | [ImageURL|none]`",
                 delete_after=10
             )
             return
@@ -36,18 +35,6 @@ class Announcements(commands.Cog):
         title     = parts[1]
         text      = parts[2]
         image_url = parts[3].strip() if len(parts) > 3 and parts[3].lower() != "none" else None
-
-        if ANNOUNCE_CHANNEL_ID == 0:
-            await ctx.send(
-                "Announcement channel not configured. Set `ANNOUNCE_CHANNEL_ID` in `cogs/announcements.py`.",
-                delete_after=10
-            )
-            return
-
-        channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-        if not channel:
-            await ctx.send("Announcement channel not found.", delete_after=10)
-            return
 
         embed = discord.Embed(title=title, description=text, color=0xffd700)
         embed.set_footer(text=f"Announced by {ctx.author.display_name}")
@@ -105,6 +92,8 @@ class Announcements(commands.Cog):
             await ctx.send("You don't have permission to use this command.", delete_after=5)
         elif isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(f"Missing argument: `{error.param.name}`", delete_after=5)
+        elif isinstance(error, commands.ChannelNotFound):
+            await ctx.send("Channel not found. Make sure to tag it like `#channel-name`.", delete_after=5)
         else:
             await ctx.send(f"Error: {error}", delete_after=5)
 
