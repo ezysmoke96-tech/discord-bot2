@@ -68,22 +68,17 @@ def log_get():
     token = request.args.get("token", "")
     if token != AUTH_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
-
     log_type = request.args.get("type", "")
     params   = request.args.to_dict()
-
     embed, channel_id = get_embed(log_type, params)
     if embed is None:
         return jsonify({"error": "unknown log type"}), 400
-
     if bot_ref is None:
         return jsonify({"error": "bot not ready"}), 503
-
     async def send():
         ch = bot_ref.get_channel(channel_id)
         if ch:
             await ch.send(embed=embed)
-
     import asyncio
     asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
     return jsonify({"status": "logged"})
@@ -94,22 +89,17 @@ def log_post():
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
     if token != AUTH_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
-
     data     = request.get_json(force=True) or {}
     log_type = data.get("type", "")
-
     embed, channel_id = get_embed(log_type, data)
     if embed is None:
         return jsonify({"error": "unknown log type"}), 400
-
     if bot_ref is None:
         return jsonify({"error": "bot not ready"}), 503
-
     async def send():
         ch = bot_ref.get_channel(channel_id)
         if ch:
             await ch.send(embed=embed)
-
     import asyncio
     asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
     return jsonify({"status": "logged"})
@@ -126,7 +116,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# help_command=None disables the default help so our custom embed one works
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 bot_ref = bot
 
 COGS = [
@@ -145,89 +136,6 @@ COGS = [
     "cogs.help",
 ]
 
-
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    for cog in COGS:
-        try:
-            await bot.load_extension(cog)
-            print(f"[cog] Loaded {cog}")
-        except Exception as e:
-            print(f"[cog] Failed to load {cog}: {e}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"[slash] Synced {len(synced)} commands")
-    except Exception as e:
-        print(f"[slash] Sync failed: {e}")
-
-
-if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    bot.run(os.environ["DISCORD_TOKEN"])
-    async def send():
-        ch = bot_ref.get_channel(channel_id)
-        if ch:
-            await ch.send(embed=embed)
-
-    import asyncio
-    asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
-    return jsonify({"status": "logged"})
-
-
-@app.route("/log", methods=["POST"])
-def log_post():
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    if token != AUTH_TOKEN:
-        return jsonify({"error": "unauthorized"}), 401
-
-    data     = request.get_json(force=True) or {}
-    log_type = data.get("type", "")
-
-    embed, channel_id = get_embed(log_type, data)
-    if embed is None:
-        return jsonify({"error": "unknown log type"}), 400
-
-    if bot_ref is None:
-        return jsonify({"error": "bot not ready"}), 503
-
-    async def send():
-        ch = bot_ref.get_channel(channel_id)
-        if ch:
-            await ch.send(embed=embed)
-
-    import asyncio
-    asyncio.run_coroutine_threadsafe(send(), bot_ref.loop)
-    return jsonify({"status": "logged"})
-
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    print(f"[web] Listening on port {port}")
-    app.run(host="0.0.0.0", port=port)
-
-
-# ── Discord bot ───────────────────────────────────────────────────────────────
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-bot_ref = bot
-
-COGS = [
-    "cogs.general",
-    "cogs.moderation",
-    "cogs.logging_cog",
-    "cogs.welcome",
-    "cogs.verification",
-    "cogs.roblox_info",
-    "cogs.debug",
-    "cogs.antiraid",
-    "cogs.warnings",
-    "cogs.giveaway",
-]
 
 @bot.event
 async def on_ready():
