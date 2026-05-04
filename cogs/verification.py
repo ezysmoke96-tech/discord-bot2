@@ -79,7 +79,10 @@ class Verification(commands.Cog):
             await ctx.send("Please provide your Roblox username. Usage: `!verify <roblox_username>`")
             return
 
-        await ctx.message.delete()
+        try:
+            await ctx.message.delete()
+        except discord.NotFound:
+            pass
 
         roblox_user = await _get_roblox_user(roblox_username)
         if not roblox_user:
@@ -137,7 +140,10 @@ class Verification(commands.Cog):
     @commands.command(name="done")
     async def done(self, ctx: commands.Context):
         print(f"[verify] !done called by {ctx.author} (ID: {ctx.author.id})")
-        await ctx.message.delete()
+        try:
+            await ctx.message.delete()
+        except discord.NotFound:
+            pass
 
         entry = pending.get(ctx.author.id)
         if not entry:
@@ -233,7 +239,10 @@ class Verification(commands.Cog):
     @commands.command(name="unverify")
     async def unverify(self, ctx: commands.Context):
         print(f"[verify] !unverify called by {ctx.author} (ID: {ctx.author.id})")
-        await ctx.message.delete()
+        try:
+            await ctx.message.delete()
+        except discord.NotFound:
+            pass
 
         if ctx.author.id not in verified:
             print(f"[verify] {ctx.author} is not in verified dict")
