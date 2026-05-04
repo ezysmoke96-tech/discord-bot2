@@ -17,34 +17,28 @@ class Announcements(commands.Cog):
         self.bot = bot
 
     # ── !announce ─────────────────────────────────────────────────────────────
-    # Usage: !announce #channel | [ping|none] | [Title] | [Text] | [ImageURL|none]
+    # Usage: !announce #channel <ping|none> <Title> <Text> [image|none]
+    # For multi-word title or text, wrap in "quotes"
+    # Examples:
+    #   !announce #general @everyone Test Wassup none
+    #   !announce #general none "Server Update" "We have a new update today!" none
+    #   !announce #events @everyone "Event Night" "Join us at 8PM!" https://i.imgur.com/abc.gif
     @commands.command(name="announce")
     @commands.has_permissions(manage_messages=True)
-    async def announce(self, ctx, channel: discord.TextChannel, *, args: str):
+    async def announce(self, ctx, channel: discord.TextChannel, ping: str, title: str, text: str, image: str = "none"):
         await ctx.message.delete()
-
-        parts = [p.strip() for p in args.split("|")]
-        if len(parts) < 3:
-            await ctx.send(
-                "Usage: `!announce #channel | [ping|none] | [Title] | [Text] | [ImageURL|none]`",
-                delete_after=10
-            )
-            return
-
-        ping      = parts[0] if parts[0].lower() != "none" else ""
-        title     = parts[1]
-        text      = parts[2]
-        image_url = parts[3].strip() if len(parts) > 3 and parts[3].lower() != "none" else None
 
         embed = discord.Embed(title=title, description=text, color=0xffd700)
         embed.set_footer(text=f"Announced by {ctx.author.display_name}")
-        if image_url:
-            embed.set_image(url=image_url)
 
-        content = ping if ping else None
+        if image.lower() != "none":
+            embed.set_image(url=image)
+
+        content = None if ping.lower() == "none" else ping
         await channel.send(content=content, embed=embed)
 
     # ── !SSU ──────────────────────────────────────────────────────────────────
+    # Usage: !SSU <ServerName> [note]
     @commands.command(name="SSU")
     @commands.has_permissions(manage_messages=True)
     async def ssu(self, ctx, sv: str, *, note: str = "N/A"):
@@ -91,9 +85,13 @@ class Announcements(commands.Cog):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("You don't have permission to use this command.", delete_after=5)
         elif isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"Missing argument: `{error.param.name}`", delete_after=5)
+            await ctx.send(
+                "Usage: `!announce #channel <@ping|none> <Title> <Text> <ImageURL|none>`\n"
+                "Wrap multi-word fields in quotes: `\"My Title Here\"`",
+                delete_after=10
+            )
         elif isinstance(error, commands.ChannelNotFound):
-            await ctx.send("Channel not found. Make sure to tag it like `#channel-name`.", delete_after=5)
+            await ctx.send("Channel not found. Tag it like `#channel-name`.", delete_after=5)
         else:
             await ctx.send(f"Error: {error}", delete_after=5)
 
